@@ -13,7 +13,7 @@ bot = commands.Bot(command_prefix="!", intents=discord.Intents.all())
 async def on_ready():
     print(f"Berhasil login sebagai {bot.user.name}")
 
-@bot.command(name='start', aliases=['mulai', 'play'])
+@bot.command(name='start', aliases=['mulai', 'play', 'main'])
 async def startgame(ctx):
     text_start = (
         f'Halo {ctx.author.mention}! Selamat datang di World Collide.\n'
