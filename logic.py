@@ -78,8 +78,9 @@ class TombolGame(discord.ui.View):
                 f"DMG Musuh: {enemy_dmg}\n",
                 ephemeral=True
             )
-
-            view = TombolCombat(enemy, enemy_dmg, enemy_hp, self.game.hp, self.game.dmg, self.game.defend)
+            player = interaction.user
+            view = TombolCombat(self.game, enemy, enemy_dmg, enemy_hp, 
+                                self.game.hp[player], self.game.dmg[player], self.game.defend[player])
             await interaction.followup.send("Apa yang akan kamu lakukan?", view=view, ephemeral=True)
 
     @discord.ui.button(label="Melawan Pemain", style=discord.ButtonStyle.gray, custom_id="fight")
@@ -90,8 +91,7 @@ class TombolGame(discord.ui.View):
     async def camp(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Kamu memilih untuk Pergi ke Tempat Kemah untuk beristirahat.", ephemeral=True)
 
-        game = Game(self.game)
-        game.hp = 100
+        self.game.hp = self.game.max_hp
 
         disabled = self.updated_buttons | {"camp"}
         view = TombolGame(self.game, disabled_buttons=disabled)
@@ -103,6 +103,16 @@ class TombolGame(discord.ui.View):
     async def journal(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Kamu memilih untuk Buka Jurnal.", ephemeral=True)
 
+        username = interaction.user.name
+        jurnal = self.game.get_jurnal(username)
+        await interaction.followup.send(jurnal, ephemeral=True)
+
+        disabled = self.updated_buttons | {"journal"}
+        view = TombolGame(self.game, disabled_buttons=disabled)
+        view.enable_button("end_turn")
+
+        await interaction.followup.send("Apa yang akan kamu lakukan selanjutnya?", view=view, ephemeral=True)
+
     @discord.ui.button(label="Beraliansi", style=discord.ButtonStyle.gray, custom_id="ally")
     async def ally(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.send_message("Kamu memilih untuk Beraliansi.", ephemeral=True)
@@ -112,9 +122,13 @@ class TombolGame(discord.ui.View):
         await interaction.response.send_message("Kamu memilih untuk Akhiri Giliran.", ephemeral=True)
         await interaction.followup.send(f"Giliran {interaction.user.mention} berakhir!")
 
-        next_player = self.game.next_turn()
-        if next_player:
-            await interaction.followup.send(f"Giliran berikutnya adalah {next_player.mention}.")
+        next_player_name = self.game.next_turn()
+        if next_player_name:
+            next_player = discord.utils.get(interaction.guild.members, name=next_player_name)
+            if next_player:
+                await interaction.followup.send(f"Giliran berikutnya adalah {next_player.mention}.")
+            else:
+                await interaction.followup.send(f"Giliran berikutnya adalah {next_player_name}.")
 
             self.updated_buttons.clear()
             view = TombolGame(self.game)
@@ -138,8 +152,9 @@ class TombolGame(discord.ui.View):
                 self.updated_buttons.discard(custom_id)
 
 class TombolCombat(discord.ui.View):
-    def __init__(self, enemy, enemy_dmg, enemy_hp, hp, dmg, defend):
+    def __init__(self, game, enemy, enemy_dmg, enemy_hp, hp, dmg, defend):
         super().__init__(timeout=None)
+        self.game = game
         self.enemy = enemy
         self.enemy_dmg = enemy_dmg
         self.enemy_hp = enemy_hp
@@ -154,26 +169,25 @@ class TombolCombat(discord.ui.View):
         await self.combat_loop(interaction)
         if self.enemy_hp <= 0:
             await interaction.followup.send("Kamu menang! Musuh telah dikalahkan.", ephemeral=True)
-            game = Game(players=[interaction.user])
-            game.poin_kill_enemy(self.enemy)
+            self.game.poin_kill_enemy(interaction.user, self.enemy)
 
             disabled = {"explore"}
-            view = TombolGame(game, disabled_buttons=disabled)
+            view = TombolGame(self.game, disabled_buttons=disabled)
             view.enable_button("end_turn")
             
             await interaction.followup.send("Pilih aksimu:", view=view, ephemeral=True)
         elif self.player_hp <= 0:
             await interaction.followup.send("Kamu kalah! HP-mu habis.", ephemeral=True)
-            game = Game(players=[interaction.user])
-            game.poin_lose()
+            self.game.poin_lose(interaction.user)
 
             disabled = {"explore"}
-            view = TombolGame(game, disabled_buttons=disabled)
+            view = TombolGame(self.game, disabled_buttons=disabled)
             view.enable_button("end_turn")
 
             await interaction.followup.send("Pilih aksimu:", view=view, ephemeral=True)
         else:
-            view = TombolCombat(self.enemy, self.enemy_dmg, self.enemy_hp, self.player_hp, self.player_dmg, self.player_defend)
+            view = TombolCombat(self.game, self.enemy, self.enemy_dmg, self.enemy_hp, 
+                                self.player_hp, self.player_dmg, self.player_defend)
             await interaction.followup.send("Apa yang akan kamu lakukan selanjutnya?", view=view, ephemeral=True)
     
     @discord.ui.button(label='Bertahan', style=discord.ButtonStyle.green, custom_id='defend')
@@ -183,16 +197,16 @@ class TombolCombat(discord.ui.View):
         await self.do_defend(interaction)
         if self.player_hp <= 0:
             await interaction.followup.send("Kamu kalah! HP-mu habis.", ephemeral=True)
-            game = Game(players=[interaction.user])
-            game.poin_lose()
+            self.game.poin_lose(interaction.user)
 
             disabled = {"explore"}
-            view = TombolGame(game, disabled_buttons=disabled)
+            view = TombolGame(self.game, disabled_buttons=disabled)
             view.enable_button("end_turn")
 
             await interaction.followup.send("Pilih aksimu:", view=view, ephemeral=True)
         else:
-            view = TombolCombat(self.enemy_dmg, self.enemy_hp, self.player_hp, self.player_dmg, self.player_defend)
+            view = TombolCombat(self.game, self.enemy, self.enemy_dmg, self.enemy_hp, 
+                                self.player_hp, self.player_dmg, self.player_defend)
             await interaction.followup.send("Apa yang akan kamu lakukan selanjutnya?", view=view, ephemeral=True)
     
     async def combat_loop(self, interaction):
@@ -201,12 +215,14 @@ class TombolCombat(discord.ui.View):
         await interaction.followup.send(f"Serangan berhasil! Musuh kehilangan {self.player_dmg} HP.", ephemeral=True)
 
         self.player_hp -= self.enemy_dmg
+        self.game.hp = self.player_hp
         await asyncio.sleep(1)
         await interaction.followup.send(f"Musuh menyerang balik! Kamu kehilangan {self.enemy_dmg} HP.", ephemeral=True)
     
     async def do_defend(self, interaction):
         reduced_dmg = max(0, self.enemy_dmg - self.player_defend)
         self.player_hp -= reduced_dmg
+        self.game.hp = self.player_hp
         await asyncio.sleep(1)
         await interaction.followup.send(f"Kamu bertahan! Kamu hanya kehilangan {reduced_dmg} HP.", ephemeral=True)
 
@@ -221,15 +237,18 @@ class Game:
                    'Manusia Cyber', 'Manusia Cyber', 'Manusia Cyber', 'Manusia Cyber', 
                    'Naga', 'Naga', 'Robot', 'Robot', 'Sans']
 
-    def __init__(self, players):
+    def __init__(self, players: list =[discord.Member]):
             self.players = players
             self.shuffled_players = []
             self.player_turn = None
-            self.hp = 100
-            self.dmg = 20
-            self.defend = 10
-            self.rank = 0
-            self.points = 0
+
+            # Status pemain
+            self.hp = {players: 100 for players in players}
+            self.max_hp = {players: self.hp[players] for players in players}
+            self.dmg = {players: 20 for players in players}
+            self.defend = {players: 10 for players in players}
+            self.rank = {players: 0 for players in players}
+            self.points = {players: 0 for players in players}
     
     def urutan_pemain(self):
         self.shuffled_players = self.players.copy()
@@ -243,8 +262,12 @@ class Game:
     def next_turn(self):
         if not self.shuffled_players:
             return None
+        
         current_index = self.shuffled_players.index(self.player_turn)
-        next_index = (current_index + 1) % len(self.shuffled_players)
+        next_index = current_index + 1
+
+        if next_index >= len(self.shuffled_players):
+            next_index = 0
         self.player_turn = self.shuffled_players[next_index]
         return self.player_turn
     
@@ -263,31 +286,73 @@ class Game:
             enemy_dmg = random.randint(10, 20)
             return enemy, enemy_hp, enemy_dmg
     
-    def poin_kill_enemy(self, enemy):
+    def poin_kill_enemy(self, player, enemy):
         if enemy in ['Naga', 'Robot']:
             poin = random.randint(100, 200)
         elif enemy == 'Sans':
             poin = 1
         else:
             poin = random.randint(20, 50)
-        self.points += poin
+        self.points[player] += poin
         self.update_rank()
 
     def poin_kill_player(self):
         pass
 
-    def poin_lose(self):
+    def poin_lose(self, player):
         poin = random.randint(10, 20)
-        self.points = max(0, self.points - poin)
-        if self.points == 0:
+        self.points[player] = max(0, self.points[player] - poin)
+        if self.points[player] <= 0:
             self.rank = 0
+            self.points[player] = 0
         else:
             self.update_rank()
 
-    def update_rank(self):
+    def update_rank(self, interaction=None):
+        prev_rank = self.rank
         for i, threshold in enumerate(self.rank_thresholds):
             if self.points >= threshold:
                 self.rank = i
-                self.hp += 50
-                self.dmg += 20
-                self.defend += 10
+        if self.rank > prev_rank and interaction is not None:
+            asyncio.create_task(
+                interaction.followup.send(
+                    f"Selamat! Kamu naik peringkat menjadi {self.rank_names[self.rank]}!"
+                    )
+                )
+            self.hp += 50
+            self.max_hp = self.hp
+            self.dmg += 10
+            self.defend += 5
+            
+    def get_jurnal(self, username):
+        jurnal = (
+            f"**Jurnal {username}:**\n"
+            f"Peringkat: {self.rank_names[self.rank]}\n"
+            f"Total Poin: {self.points}\n"
+            f"HP: {self.hp}/{self.max_hp}\n"
+            f"DMG: {self.dmg}\n"
+            f"Defend: {self.defend}\n"
+            f"Musuh Terakhir yang Dikalahkan: -\n"
+            f"Pemain Terakhir yang Dikalahkan: -\n"
+        )
+        return jurnal
+    
+    async def add_points(self, points: int, ctx=None):
+        prev_points = self.points
+        self.points += points
+        prev_points += self.points
+        await self.update_rank_ctx(ctx)
+    
+    async def update_rank_ctx(self, ctx=None):
+        prev_rank = self.rank
+        for i, threshold in enumerate(self.rank_thresholds):
+            if self.points >= threshold:
+                self.rank = i
+        if self.rank > prev_rank and ctx is not None:
+            await ctx.send(
+                f"Selamat! Kamu naik peringkat menjadi {self.rank_names[self.rank]}!"
+                )
+            self.hp += 50
+            self.max_hp = self.hp
+            self.dmg += 10
+            self.defend += 5
