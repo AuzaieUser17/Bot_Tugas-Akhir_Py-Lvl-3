@@ -16,11 +16,12 @@ class TombolMenu(discord.ui.View):
         game.start()
 
         await interaction.followup.send(f"Giliran pertama adalah {game.player_turn.mention}.")
-        
-        view=TombolGame(game)
+
+        view = TombolGame(game)
         view.disable_button("end_turn")
 
-        await interaction.followup.send("Pilih aksimu:", view=view, ephemeral=True)
+        # pesan publik (bisa diedit), hanya pemain giliran bisa klik
+        await interaction.followup.send("Pilih aksimu:", view=view)
 
     @discord.ui.button(label="Lihat Peraturan", style=discord.ButtonStyle.secondary, custom_id="rules")
     async def view_rules(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -36,12 +37,11 @@ class TombolMenu(discord.ui.View):
             "3. Setelah pemain memilih salah satu aksi, pemain dapat memilih untuk mengakhiri gilirannya atau memilih aksi yang lain (NOTE: Pemain tidak bisa memiliih aksi yang sama)\n"
             "4. Permainan berakhir ketika salah satu pemain mencapai peringkat Master"
         )
-        await interaction.response.send_message(rules_text)
 
         view = TombolMenu()
         view.update_buttons("rules")
 
-        await interaction.followup.send(view=view)
+        await interaction.response.send_message(rules_text, view=view)
 
     def update_buttons(self, custom_id):
         for item in self.children:
@@ -57,31 +57,39 @@ class TombolGame(discord.ui.View):
         self.updated_buttons = disabled_buttons or set()
         self.apply_disabled_buttons()
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.game.player_turn:
+            await interaction.response.send_message(
+                "Bukan giliranmu!", ephemeral=True
+            )
+            return False
+        return True
+
     @discord.ui.button(label="Menjelajah", style=discord.ButtonStyle.gray, custom_id="explore")
     async def explore(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Kamu memilih untuk Menjelajah.", ephemeral=True)
+        await interaction.response.edit_message(content=f"{interaction.user.mention} memilih untuk Menjelajah.")
 
         chance = random.randint(1, 20)
         if chance == 1:
-            await interaction.followup.send("Kamu tidak menemukan apa-apa saat menjelajah.")
-
             disabled = self.updated_buttons | {"explore"}
+
             view = TombolGame(self.game, disabled_buttons=disabled)
             view.enable_button("end_turn")
 
-            await interaction.followup.send("Apa yang akan kamu lakukan selanjutnya?", view=view, ephemeral=True)
+            await interaction.message.edit(content="Kamu tidak menemukan apa-apa saat menjelajah.\nApa yang akan kamu lakukan selanjutnya?", view=view)
         else:
             enemy, enemy_hp, enemy_dmg = self.game.enemy_encounter()
-            await interaction.followup.send(
-                f"Kamu bertemu dengan {enemy}!\n"
-                f"HP Musuh: {enemy_hp}\n"
-                f"DMG Musuh: {enemy_dmg}\n",
-                ephemeral=True
+            embed = discord.Embed(
+                description=f"Musuh: {enemy}\nHP Musuh: {enemy_hp}\nDMG Musuh: {enemy_dmg}", 
+                color=discord.Color.red()
             )
+
             player = interaction.user
             view = TombolCombat(self.game, enemy, enemy_dmg, enemy_hp, 
                                 self.game.hp[player], self.game.dmg[player], self.game.defend[player])
-            await interaction.followup.send("Apa yang akan kamu lakukan?", view=view, ephemeral=True)
+
+            msg = await interaction.followup.send("Kamu bertemu dengan Musuh!", embed=embed, view=view)
+            view.msg = msg
 
     @discord.ui.button(label="Melawan Pemain", style=discord.ButtonStyle.gray, custom_id="fight")
     async def fight(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -89,29 +97,30 @@ class TombolGame(discord.ui.View):
 
     @discord.ui.button(label="Pergi ke Tempat Kemah", style=discord.ButtonStyle.gray, custom_id="camp")
     async def camp(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Kamu memilih untuk Pergi ke Tempat Kemah untuk beristirahat.", ephemeral=True)
+        await interaction.response.edit_message(content="Kamu memilih untuk Pergi ke Tempat Kemah untuk beristirahat.")
 
-        self.game.hp = self.game.max_hp
+        self.game.hp[interaction.user] = self.game.max_hp[interaction.user]
 
         disabled = self.updated_buttons | {"camp"}
         view = TombolGame(self.game, disabled_buttons=disabled)
         view.enable_button("end_turn")
 
-        await interaction.followup.send("Nyawa kamu telah pulih! Apa yang akan kamu lakukan selanjutnya?", view=view, ephemeral=True)
+        await interaction.message.edit(content="Nyawa kamu telah pulih! Apa yang akan kamu lakukan selanjutnya?", view=view)
 
     @discord.ui.button(label="Buka Jurnal", style=discord.ButtonStyle.gray, custom_id="journal")
     async def journal(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Kamu memilih untuk Buka Jurnal.", ephemeral=True)
-
         username = interaction.user.name
-        jurnal = self.game.get_jurnal(username)
-        await interaction.followup.send(jurnal, ephemeral=True)
+        enemy = self.game.enemy
+        jurnal = self.game.get_jurnal(interaction.user, username, enemy)
 
         disabled = self.updated_buttons | {"journal"}
         view = TombolGame(self.game, disabled_buttons=disabled)
         view.enable_button("end_turn")
 
-        await interaction.followup.send("Apa yang akan kamu lakukan selanjutnya?", view=view, ephemeral=True)
+        await interaction.response.edit_message(
+            content=f"Kamu membuka jurnalmu:\n{jurnal}\n\nApa yang akan kamu lakukan selanjutnya?", 
+            view=view
+            )
 
     @discord.ui.button(label="Beraliansi", style=discord.ButtonStyle.gray, custom_id="ally")
     async def ally(self, interaction: discord.Interaction, button: discord.ui.Button):
@@ -119,20 +128,18 @@ class TombolGame(discord.ui.View):
 
     @discord.ui.button(label="Akhiri Giliran", style=discord.ButtonStyle.red, custom_id="end_turn")
     async def end_turn(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Kamu memilih untuk Akhiri Giliran.", ephemeral=True)
-        await interaction.followup.send(f"Giliran {interaction.user.mention} berakhir!")
+        next_player = self.game.next_turn()
+        if next_player:
+            await interaction.channel.send(f"Giliran berikutnya adalah {next_player.mention}.")
 
-        next_player_name = self.game.next_turn()
-        if next_player_name:
-            next_player = discord.utils.get(interaction.guild.members, name=next_player_name)
-            if next_player:
-                await interaction.followup.send(f"Giliran berikutnya adalah {next_player.mention}.")
-            else:
-                await interaction.followup.send(f"Giliran berikutnya adalah {next_player_name}.")
+        self.updated_buttons.clear()
+        view = TombolGame(self.game)
+        view.disable_button("end_turn")
 
-            self.updated_buttons.clear()
-            view = TombolGame(self.game)
-            view.disable_button("end_turn")
+        await interaction.message.edit(
+            content=f"{self.game.player_turn.mention}, sekarang giliranmu. Pilih aksimu:", view=view
+            )
+
 
     def apply_disabled_buttons(self):
         for item in self.children:
@@ -152,84 +159,115 @@ class TombolGame(discord.ui.View):
                 self.updated_buttons.discard(custom_id)
 
 class TombolCombat(discord.ui.View):
-    def __init__(self, game, enemy, enemy_dmg, enemy_hp, hp, dmg, defend):
+    def __init__(self, game, enemy, enemy_dmg, enemy_hp, player_hp, player_dmg, player_defend):
         super().__init__(timeout=None)
         self.game = game
         self.enemy = enemy
         self.enemy_dmg = enemy_dmg
         self.enemy_hp = enemy_hp
-        self.player_hp = hp
-        self.player_dmg = dmg
-        self.player_defend = defend
-    
-    @discord.ui.button(label="Serang", style=discord.ButtonStyle.red, custom_id="attack")
-    async def attack(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Kamu memilih untuk menyerang!.", ephemeral=True)
+        self.player_hp = player_hp
+        self.player_dmg = player_dmg
+        self.player_defend = player_defend
+        self.msg = None
 
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user != self.game.player_turn:
+            await interaction.response.send_message(
+                "Bukan giliranmu!", ephemeral=True
+            )
+            return False
+        return True
+
+    @discord.ui.button(label="Serang", style=discord.ButtonStyle.red)
+    async def attack(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
         await self.combat_loop(interaction)
+
+    @discord.ui.button(label="Bertahan", style=discord.ButtonStyle.blurple)
+    async def defend(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await interaction.response.defer()
+        await self.do_defend(interaction)
+    
+    async def combat_loop(self, interaction: discord.Interaction):
+        self.enemy_hp -= self.player_dmg
+        await asyncio.sleep(1)
+
+        embed = discord.Embed(
+            description=f"{interaction.user.mention} menyerang!\n"
+                        f"Musuh {self.enemy} kehilangan {self.player_dmg} HP.\n"
+                        f"HP Musuh: {self.enemy_hp}",
+            color=discord.Color.orange()
+        )
+        await self.msg.edit(embed=embed, view=self)
+
         if self.enemy_hp <= 0:
-            await interaction.followup.send("Kamu menang! Musuh telah dikalahkan.", ephemeral=True)
             self.game.poin_kill_enemy(interaction.user, self.enemy)
 
-            disabled = {"explore"}
-            view = TombolGame(self.game, disabled_buttons=disabled)
-            view.enable_button("end_turn")
-            
-            await interaction.followup.send("Pilih aksimu:", view=view, ephemeral=True)
-        elif self.player_hp <= 0:
-            await interaction.followup.send("Kamu kalah! HP-mu habis.", ephemeral=True)
-            self.game.poin_lose(interaction.user)
-
-            disabled = {"explore"}
+            disabled = {"explore"}  # tandai tombol explore sudah dipakai
             view = TombolGame(self.game, disabled_buttons=disabled)
             view.enable_button("end_turn")
 
-            await interaction.followup.send("Pilih aksimu:", view=view, ephemeral=True)
-        else:
-            view = TombolCombat(self.game, self.enemy, self.enemy_dmg, self.enemy_hp, 
-                                self.player_hp, self.player_dmg, self.player_defend)
-            await interaction.followup.send("Apa yang akan kamu lakukan selanjutnya?", view=view, ephemeral=True)
-    
-    @discord.ui.button(label='Bertahan', style=discord.ButtonStyle.green, custom_id='defend')
-    async def defend(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.send_message("Kamu memilih untuk bertahan!.", ephemeral=True)
+            embed = discord.Embed(
+                description=
+                        f"{interaction.user.mention} menyerang!\n"
+                        f"Musuh {self.enemy} dikalahkan!\n"
+                        f"Kamu mendapat poin!", 
+                color=discord.Color.green()
+            )
 
-        await self.do_defend(interaction)
-        if self.player_hp <= 0:
-            await interaction.followup.send("Kamu kalah! HP-mu habis.", ephemeral=True)
-            self.game.poin_lose(interaction.user)
-
-            disabled = {"explore"}
-            view = TombolGame(self.game, disabled_buttons=disabled)
-            view.enable_button("end_turn")
-
-            await interaction.followup.send("Pilih aksimu:", view=view, ephemeral=True)
-        else:
-            view = TombolCombat(self.game, self.enemy, self.enemy_dmg, self.enemy_hp, 
-                                self.player_hp, self.player_dmg, self.player_defend)
-            await interaction.followup.send("Apa yang akan kamu lakukan selanjutnya?", view=view, ephemeral=True)
-    
-    async def combat_loop(self, interaction):
-        self.enemy_hp -= self.player_dmg
-        await asyncio.sleep(2)
-        await interaction.followup.send(f"Serangan berhasil! Musuh kehilangan {self.player_dmg} HP.", ephemeral=True)
-
+            await self.msg.edit(content="Pilih aksi berikutnya:", embed=embed, view=view)
+            return
+        
+        await asyncio.sleep(1)
         self.player_hp -= self.enemy_dmg
-        self.game.hp = self.player_hp
-        await asyncio.sleep(1)
-        await interaction.followup.send(f"Musuh menyerang balik! Kamu kehilangan {self.enemy_dmg} HP.", ephemeral=True)
+        self.game.hp[interaction.user] = self.player_hp
+
+        embed.description += f"\n\nMusuh menyerang balik! {interaction.user.mention} kehilangan {self.enemy_dmg} HP.\nHP Kamu: {self.player_hp}"
+        await self.msg.edit(embed=embed, view=self)
+
+        if self.player_hp <= 0:
+            self.game.poin_lose(interaction.user)
+
+            disabled = {"explore"}
+            view = TombolGame(self.game, disabled_buttons=disabled)
+            view.enable_button("end_turn")
+
+            embed.description += f"\n\n{interaction.user.mention} kalah!"
+
+            await self.msg.edit(embed=embed, view=view)
     
-    async def do_defend(self, interaction):
+    async def do_defend(self, interaction: discord.Interaction):
         reduced_dmg = max(0, self.enemy_dmg - self.player_defend)
+
         self.player_hp -= reduced_dmg
-        self.game.hp = self.player_hp
+        self.game.hp[interaction.user] = self.player_hp
+
+        embed = discord.Embed(
+            description=f"{interaction.user.mention} bertahan!\n"
+                        f"Serangan musuh dikurangi {self.player_defend}.\n"
+                        f"Kamu hanya kehilangan {reduced_dmg} HP.\n"
+                        f"HP Kamu: {self.player_hp}",
+            color=discord.Color.blue()
+        )
         await asyncio.sleep(1)
-        await interaction.followup.send(f"Kamu bertahan! Kamu hanya kehilangan {reduced_dmg} HP.", ephemeral=True)
+        await self.msg.edit(embed=embed, view=self)
+
+        if self.player_hp <= 0:
+            self.game.poin_lose(interaction.user)
+
+            disabled = {"explore"}
+            view = TombolGame(self.game, disabled_buttons=disabled)
+            view.enable_button("end_turn")
+
+            embed.description += f"\n\n{interaction.user.mention} kalah!"
+            await self.msg.edit(embed=embed, view=view)
 
 class Game:
+    # Rank
     rank_names = ['Pemula', 'Pendekar', 'Pejuang', 'Pejuang Elite', 'Master']
     rank_thresholds = [0, 100, 300, 600, 1000]
 
+    # Tipe musuh
     enemy_types = ['Zombie', 'Zombie', 'Zombie', 'Zombie', 
                    'Hewan Liar', 'Hewan Liar', 'Hewan Liar', 'Hewan Liar', 
                    'Penyihir', 'Penyihir', 'Penyihir', 'Penyihir', 
@@ -241,6 +279,11 @@ class Game:
             self.players = players
             self.shuffled_players = []
             self.player_turn = None
+
+            # Status musuh
+            self.enemy = None
+            self.enemy_hp = 0            
+            self.enemy_dmg = 0
 
             # Status pemain
             self.hp = {players: 100 for players in players}
@@ -276,14 +319,26 @@ class Game:
         if enemy == 'Naga' or enemy == 'Robot':
             enemy_hp = random.randint(200, 300)
             enemy_dmg = random.randint(30, 50)
+
+            self.enemy = enemy
+            self.enemy_hp = enemy_hp
+            self.enemy_dmg = enemy_dmg
             return enemy, enemy_hp, enemy_dmg
         elif enemy == 'Sans':
             enemy_hp = 1
             enemy_dmg = 50
+
+            self.enemy = enemy
+            self.enemy_hp = enemy_hp
+            self.enemy_dmg = enemy_dmg
             return enemy, enemy_hp, enemy_dmg
         else:
             enemy_hp = random.randint(50, 100)
             enemy_dmg = random.randint(10, 20)
+
+            self.enemy = enemy
+            self.enemy_hp = enemy_hp
+            self.enemy_dmg = enemy_dmg
             return enemy, enemy_hp, enemy_dmg
     
     def poin_kill_enemy(self, player, enemy):
@@ -294,7 +349,7 @@ class Game:
         else:
             poin = random.randint(20, 50)
         self.points[player] += poin
-        self.update_rank()
+        self.update_rank(player)
 
     def poin_kill_player(self):
         pass
@@ -303,40 +358,41 @@ class Game:
         poin = random.randint(10, 20)
         self.points[player] = max(0, self.points[player] - poin)
         if self.points[player] <= 0:
-            self.rank = 0
+            self.rank[player] = 0
             self.points[player] = 0
         else:
-            self.update_rank()
+            self.update_rank(player)
 
-    def update_rank(self, interaction=None):
-        prev_rank = self.rank
+    def update_rank(self, player, interaction=None):
+        prev_rank = self.rank[player]
         for i, threshold in enumerate(self.rank_thresholds):
-            if self.points >= threshold:
-                self.rank = i
-        if self.rank > prev_rank and interaction is not None:
+            if self.points[player] >= threshold:
+                self.rank[player] = i
+        if self.rank[player] > prev_rank and interaction is not None:
             asyncio.create_task(
                 interaction.followup.send(
-                    f"Selamat! Kamu naik peringkat menjadi {self.rank_names[self.rank]}!"
+                    f"Selamat! Kamu naik peringkat menjadi {self.rank_names[self.rank[player]]}!"
                     )
                 )
-            self.hp += 50
-            self.max_hp = self.hp
-            self.dmg += 10
-            self.defend += 5
+            self.hp[player] += 50
+            self.max_hp[player] = self.hp[player]
+            self.dmg[player] += 10
+            self.defend[player] += 5
             
-    def get_jurnal(self, username):
+    def get_jurnal(self, player, username, enemy):
         jurnal = (
             f"**Jurnal {username}:**\n"
-            f"Peringkat: {self.rank_names[self.rank]}\n"
-            f"Total Poin: {self.points}\n"
-            f"HP: {self.hp}/{self.max_hp}\n"
-            f"DMG: {self.dmg}\n"
-            f"Defend: {self.defend}\n"
-            f"Musuh Terakhir yang Dikalahkan: -\n"
+            f"Peringkat: {self.rank_names[self.rank[player]]}\n"
+            f"Total Poin: {self.points[player]}\n"
+            f"HP: {self.hp[player]}/{self.max_hp[player]}\n"
+            f"DMG: {self.dmg[player]}\n"
+            f"Defend: {self.defend[player]}\n"
+            f"Musuh Terakhir yang Dikalahkan: {enemy}\n"
             f"Pemain Terakhir yang Dikalahkan: -\n"
         )
         return jurnal
     
+    # Tes sistem mendapatkan poin lewat command
     async def add_points(self, points: int, ctx=None):
         prev_points = self.points
         self.points += points
