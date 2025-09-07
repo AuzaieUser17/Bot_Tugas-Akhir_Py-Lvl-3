@@ -1,19 +1,17 @@
-# Bot untuk Tugas Akhir
-## Ide tugas akhir:
-> idenya adalah untuk membuat bot discord yang mirip dengan bot pokemon di pelajaran sebelumnya, namun dibuat lebih interaktif dan memiliki beberapa fitur tambahan
+# Bot permainan Discord
+## Pengenalan Bot
+ini adalah Bot permainan untuk dipakai di Discord kalian.
+kalian akan bermain di World Collide, tempat dimana berbagai realita saling bertabrakan.
+kalian akan berhadapan berbagai macam musuh, dari dunia fantasi hingga dunia sci-fi
 
-## Alat yang akan saya gunakan untuk mengerjakan ide:
-> Visual Studio Code
-> Discord.py
-> Time Module
-> Random Module
+## Perintah Bot
+Bot ini memiliki dua perintah:
+1. !start / !play - memulai permainan
+2. !endgame - mengakhiri permainan (NOTE: hanya host yang bisa mengakhiri permainan)
 
-## Proyek ini akan berisi:
-> Tombol yang interaktif
-> Bisa mengacak urutan bermain
-> Punya sistem Leaderboard
-> Setiap Pemain memiliki sebuah Jurnal
-> Bisa membuat Aliansi dengan pemain lain (Opsional)
+## Hal yang diperlukan sebelum memakai Bot
+1. Discord.py
+2. Modul random dan Modul asyncio
 
-## Catatan tambahan:
-> Saya kemungkinan besar akan mengambil bagian kode dari proyek sebelumnya biar menghemat waktu
+# Catatan penting!
+kode ini tidak sempurna. jika ada error muncul ketika mencoba kode ini, harap kasih tahu saya
